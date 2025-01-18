@@ -113,37 +113,44 @@ void Select(const string& command) {
     size_t wherePos = command.find("WHERE", tableNameStart);
     size_t joinPos = command.find("JOIN", tableNameStart);
 
-    string tableName = trim(command.substr(tableNameStart, (wherePos == string::npos ? (joinPos == string::npos ? command.size() : joinPos) : wherePos) - tableNameStart));
+    string tableName1 = trim(command.substr(tableNameStart, 
+        (joinPos == string::npos ? (wherePos == string::npos ? command.size() : wherePos) : joinPos) - tableNameStart));
 
-    if (!tables.count(tableName)) {
-        cout << "Error: Table " << tableName << " does not exist." << endl;
+    if (!tables.count(tableName1)) {
+        cout << "Error: Table " << tableName1 << " does not exist." << endl;
         return;
     }
 
-    Table& table = tables[tableName];
-    vector<vector<string>> resultRows = table.rows;
+    Table& table1 = tables[tableName1];
+    vector<vector<string>> resultRows = table1.rows;
     vector<string> resultColumns;
 
-    for (const auto& col : table.columns) {
-        resultColumns.push_back(col.name); 
+    for (const auto& col : table1.columns) {
+        resultColumns.push_back(col.name);
     }
 
     // JOIN
     if (joinPos != string::npos) {
         size_t joinTableStart = joinPos + 4;
         size_t onPos = command.find("ON", joinTableStart);
-        string joinTableName = trim(command.substr(joinTableStart, onPos - joinTableStart));
+        string tableName2 = trim(command.substr(joinTableStart, onPos == string::npos ? 
+            (wherePos == string::npos ? command.size() : wherePos) : onPos - joinTableStart));
 
-        if (!tables.count(joinTableName)) {
-            cout << "Error: Table " << joinTableName << " does not exist." << endl;
+        if (!tables.count(tableName2)) {
+            cout << "Error: Table " << tableName2 << " does not exist." << endl;
             return;
         }
 
-        Table& joinTable = tables[joinTableName];
+        Table& table2 = tables[tableName2];
+
+        for (const auto& col : table2.columns) {
+            resultColumns.push_back(col.name);
+        }
 
         if (onPos != string::npos) {
             size_t onConditionStart = onPos + 2;
-            string onCondition = trim(command.substr(onConditionStart));
+            string onCondition = trim(command.substr(onConditionStart, 
+                wherePos == string::npos ? command.size() - onConditionStart : wherePos - onConditionStart));
 
             size_t eqPos = onCondition.find("=");
             if (eqPos == string::npos) {
@@ -151,44 +158,50 @@ void Select(const string& command) {
                 return;
             }
 
-            string leftColumn = trim(onCondition.substr(0, eqPos));
-            string rightColumn = trim(onCondition.substr(eqPos + 1));
+            string t1Column = trim(onCondition.substr(0, eqPos));
+            string t2Column = trim(onCondition.substr(eqPos + 1));
 
-            int leftIdx = -1, rightIdx = -1;
-            for (size_t i = 0; i < table.columns.size(); ++i) {
-                if (table.columns[i].name == leftColumn) {
-                    leftIdx = i;
+            int t1Idx = -1, t2Idx = -1;
+            for (size_t i = 0; i < table1.columns.size(); ++i) {
+                if (table1.columns[i].name == t1Column) {
+                    t1Idx = i;
+                    break;
+                }
+            }
+            for (size_t i = 0; i < table2.columns.size(); ++i) {
+                if (table2.columns[i].name == t2Column) {
+                    t2Idx = i;
                     break;
                 }
             }
 
-            for (size_t i = 0; i < joinTable.columns.size(); ++i) {
-                if (joinTable.columns[i].name == rightColumn) {
-                    rightIdx = i;
-                    break;
-                }
-            }
-
-            if (leftIdx == -1 || rightIdx == -1) {
+            if (t1Idx == -1 || t2Idx == -1) {
                 cout << "Error: Column not found in ON condition." << endl;
                 return;
             }
 
             vector<vector<string>> joinedRows;
-            for (const auto& row1 : table.rows) {
-                for (const auto& row2 : joinTable.rows) {
-                    if (row1[leftIdx] == row2[rightIdx]) {
+            for (const auto& row1 : table1.rows) {
+                for (const auto& row2 : table2.rows) {
+                    if (row1[t1Idx] == row2[t2Idx]) {
                         vector<string> combinedRow = row1;
                         combinedRow.insert(combinedRow.end(), row2.begin(), row2.end());
                         joinedRows.push_back(combinedRow);
                     }
                 }
             }
-
             resultRows = joinedRows;
-            for (const auto& col : joinTable.columns) {
-                resultColumns.push_back(col.name + " (joined)");
+
+        } else {
+            vector<vector<string>> cartesianRows;
+            for (const auto& row1 : table1.rows) {
+                for (const auto& row2 : table2.rows) {
+                    vector<string> combinedRow = row1;
+                    combinedRow.insert(combinedRow.end(), row2.begin(), row2.end());
+                    cartesianRows.push_back(combinedRow);
+                }
             }
+            resultRows = cartesianRows;
         }
     }
 
@@ -203,26 +216,38 @@ void Select(const string& command) {
             return;
         }
 
-        string columnName = trim(whereCondition.substr(0, opPos));
-        string value = trim(whereCondition.substr(opPos + 1));
+        string columnName1 = trim(whereCondition.substr(0, opPos));
+        string rightOperand = trim(whereCondition.substr(opPos + 1));
 
-        int columnIndex = -1;
-        for (size_t i = 0; i < table.columns.size(); ++i) {
-            if (table.columns[i].name == columnName) {
-                columnIndex = i;
-                break;
+        int columnIndex1 = -1, columnIndex2 = -1;
+        bool isValueComparison = rightOperand.front() == '"' && rightOperand.back() == '"';
+
+        
+        for (size_t i = 0; i < resultColumns.size(); ++i) {
+            if (resultColumns[i] == columnName1) {
+                columnIndex1 = i;
+            }
+            if (!isValueComparison && resultColumns[i] == rightOperand) {
+                columnIndex2 = i;
             }
         }
 
-        if (columnIndex == -1) {
-            cout << "Error: Column " << columnName << " not found in table " << tableName << "." << endl;
+        if (columnIndex1 == -1 || (!isValueComparison && columnIndex2 == -1)) {
+            cout << "Error: Column not found in WHERE condition." << endl;
             return;
         }
 
         vector<vector<string>> filteredRows;
         for (const auto& row : resultRows) {
-            if (row[columnIndex] > value) { 
-                filteredRows.push_back(row);
+            if (isValueComparison) {
+                string value = rightOperand.substr(1, rightOperand.size() - 2); // Remove quotes
+                if (row[columnIndex1] > value) {
+                    filteredRows.push_back(row);
+                }
+            } else {
+                if (row[columnIndex1] > row[columnIndex2]) {
+                    filteredRows.push_back(row);
+                }
             }
         }
         resultRows = filteredRows;
@@ -247,7 +272,7 @@ void Select(const string& command) {
     }
     cout << endl;
 
-   
+    
     for (const auto& row : resultRows) {
         cout << "|";
         for (size_t i = 0; i < row.size(); ++i) {
